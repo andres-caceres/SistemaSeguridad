@@ -1,0 +1,437 @@
+
+#define MAIN_LED_PIN     	13
+
+#define SMALL_BUZZER_PIN  	3
+#define BIG_BUZZER_PIN    	8
+#define SIREN_ALARM_PIN   	0
+
+#define PANIC_BUTTON_PIN  	0
+#define RESET_BUTTON_PIN  	2
+
+#define LOCKDOWN_SWITCH_PIN 0
+#define ARMED_SWITCH_PIN  	5
+
+#define GATE_SWITCH_1_PIN 	4
+#define MOTION_SWITCH_PIN 	0
+
+//main systems control variables
+
+bool panic=0;
+bool rst=0;
+bool gates=0;
+bool armed=0;
+bool lockdown=0;
+bool motion=0;
+
+int DEFCON=0;
+int prev_DEFCON=5;
+
+//time control variables
+
+unsigned long t_s1=0;
+unsigned long t0_s1=0;
+
+const unsigned long T1=8000;
+const unsigned long T2=8000;
+const unsigned long T3=10000;
+
+//working variables
+
+bool rst_flag=0;
+
+//buttons
+
+unsigned long debounce_t0=0;
+unsigned long debounce_tc=50;
+
+bool button_release(int BTN_PIN)
+{
+  if (digitalRead(BTN_PIN)==1)
+  {
+    debounce_t0=millis();
+    while(digitalRead(BTN_PIN)==1);
+    if((millis()-debounce_tc)>=debounce_t0)
+    {
+    return 1;
+    }
+  }
+  return 0;
+}
+
+//ISR variables
+
+bool ledstate=0;
+bool buzzerstate=0;
+/*
+//ISR Functions
+
+void timer0_config()
+{
+	TCCR1A=0;
+	TCCR1B=0;
+	OCR1A=31249;//1/2 second
+	OCR1B=15624;//1/4 second
+	TCCR1B|=(1<<CS12)|(1<<WGM12);
+	TIMSK1|=(1<<OCIE1A)|(1<<OCIE1B);
+}
+
+ISR(TIMER1_COMPA_vect)
+{
+	if(ISRA_flag==1)
+	{
+	digitalWrite(MAIN_LED_PIN,!ledstate);
+	ledstate=!ledstate;
+
+	digitalWrite(SMALL_BUZZER_PIN,!buzzerstate);
+	buzzerstate=!buzzerstate;
+	}
+}
+ISR(TIMER1_COMPB_vect)
+{
+	if(ISRB_flag==1)
+	{
+			for(uint16_t i=50;i<2000;i++)
+		{
+		  tone(8,i,10);
+		}
+		 noTone(8);
+	}
+}
+*/
+//Functions for imputs
+
+void record_imputs (){
+  
+  panic=0;
+  rst=button_release(RESET_BUTTON_PIN);
+  gates=digitalRead(GATE_SWITCH_1_PIN);
+  armed=digitalRead(ARMED_SWITCH_PIN);
+  lockdown=0;
+  motion=0;
+  
+}
+
+//Functions for actions
+
+void sleep()
+{
+	Serial.println("DISARMED");
+	ISRA_flag=0;
+	ISRB_flag=0;
+}
+void guard()
+{
+	Serial.println("ARMED");
+	ISRA_flag=0;
+	ISRB_flag=0;
+}
+void warn()
+{
+	Serial.println("WARNING");
+	ISRA_flag=1;
+	ISRB_flag=0;
+}
+void speak()
+{	
+	Serial.println("SPEAKING");
+	ISRB_flag=1;
+
+}
+void shout()
+{
+	Serial.println("SHOUTING");	
+}
+void defend()
+{
+	Serial.println("DEFENDING");	
+}
+
+//Functions for indicators
+
+void beep_once()
+{
+   Serial.println("beep_once");
+}
+void beep_twice()
+{
+  Serial.println("beep_twice");
+}
+void beep_long()
+{
+  Serial.println("beep_long");
+}
+
+
+void configs()
+{
+	//timer0_config();
+	
+	//IO Configs
+	pinMode(SMALL_BUZZER_PIN, OUTPUT);
+	pinMode(BIG_BUZZER_PIN, OUTPUT);
+	pinMode(MAIN_LED_PIN, OUTPUT);
+
+	pinMode(RESET_BUTTON_PIN, INPUT);
+	pinMode(ARMED_SWITCH_PIN, INPUT);
+	pinMode(GATE_SWITCH_1_PIN, INPUT);
+	
+}
+
+//main code
+
+void setup() {
+  // put your setup code here, to run once:
+
+  configs();
+  Serial.begin(9600);
+  
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  
+  record_imputs();
+  State_Machine_s1();  
+    if(DEFCON!=prev_DEFCON)
+  {
+    Serial.print("DEFCON=");
+    Serial.println(DEFCON);
+  }
+  Serial.print("rst_flag=");
+  Serial.println(rst_flag);
+  prev_DEFCON =DEFCON; //solo para ver estado actual
+  delay(1000);
+}
+
+void State_Machine_s1(){
+
+  switch(DEFCON)
+  {
+    case 0: //disarmed
+  { 
+      //actions
+	  
+	  sleep();
+
+      /*
+      digitalWrite(SMALL_BUZZER_PIN,0);
+      digitalWrite(BIG_BUZZER_PIN,0);
+      digitalWrite(SIREN_ALARM_PIN,0);
+      */
+      //transitions
+      
+      if(armed==1)
+      {
+        DEFCON=5;
+        beep_twice();
+      }
+
+  }   
+    break;
+    
+  case 5: //DEFCON 5
+  {
+      //actions
+      guard();
+      
+      //transitions
+      
+      if(armed==1) //armed switch
+      {
+        if(gates==1) //puertas abiertas
+        {
+			if(rst_flag==0)
+			{
+				
+			  if(lockdown==1) //lockdown switch
+			  {
+				DEFCON=2;
+				beep_long();
+			  }else
+			  {
+				DEFCON=4;
+			  }
+			
+			  beep_twice();
+			}
+        }
+		else
+		{
+			rst_flag=0;
+		}
+      }
+	  else
+      {
+        DEFCON=0;
+        beep_once();
+      }     
+      
+      if(panic==1) //panic button pressed
+      {
+        DEFCON=2;
+      }
+  }   
+    break;
+    
+  case 4: //DEFCON 4
+  {        
+      //actions
+      warn();
+      t_s1=millis();
+      
+      //transitions
+      
+      if(armed==1) //armed switch
+      {
+          
+        if(rst==1) //reset to DEFCON 5
+        {
+		  rst_flag=1;
+          DEFCON=5;
+          beep_once();
+        }
+        else
+        {
+          if(gates==1)
+          {
+            if(t_s1>=t0_s1+T1) //time until DEFCON 3
+            {
+            DEFCON=3;
+            beep_twice();           
+            }
+          }
+          else
+          {
+            DEFCON=5;
+            beep_once();
+          }
+            
+          
+        }
+      }
+      else
+      {
+        DEFCON=0;
+        beep_once();
+      }
+      
+      if(panic==1) //panic button pressed
+      {
+        DEFCON=2;
+      }     
+  }   
+    break;
+    
+  case 3: //DEFCON 3
+  {        
+      //actions
+      warn();
+      speak();
+      t_s1=millis();
+      
+      //transitions
+      
+      if(armed==1) //armed switch
+      {
+        if(rst==1) //reset to DEFCON 5
+        {
+		  rst_flag=1;
+          DEFCON=5;
+          beep_once();
+        }
+        else
+        { 
+          if(gates==1)
+          {
+            if(t_s1>=t0_s1+T2) //time until DEFCON 2
+            {
+            DEFCON=2;
+            beep_twice();
+            }
+          }
+          else
+          {
+            DEFCON=5;
+            beep_once();
+          }
+        }
+      }
+      else
+      {
+        DEFCON=0;
+        beep_once();
+      }
+      
+      if(panic==1) //panic button pressed
+      {
+        DEFCON=2;
+      }
+  }   
+    break;
+    
+  case 2: //DEFCON 2
+  {     
+      //actions
+      warn();
+      speak();
+      shout();
+      t_s1=millis();
+      
+      //transitions
+      
+      if(armed==1) //armed switch
+      {
+        if(rst==1) //reset to DEFCON 5
+        {
+		  rst_flag=1;
+          DEFCON=5;
+          beep_once();
+        }
+        
+        if(t_s1>=t0_s1+T3) //time until DEFCON 1
+        {
+          DEFCON=1;
+          beep_long();//longer
+          beep_twice();
+          
+        }
+      }
+      else
+      {
+        DEFCON=0;
+        beep_once();        
+      }
+  }   
+    break;
+    
+  case 1: //DEFCON 1
+  {
+      //actions
+      warn();
+      speak();
+      shout();
+      defend();
+      
+      //transitions
+      
+      if(armed==1) //armed switch
+      {
+        if(rst==1) //reset to DEFCON 5
+        {
+		  rst_flag=1;
+          DEFCON=5;
+          beep_once();
+        }
+      }
+      else
+      {
+        DEFCON=0;
+        beep_once();  
+      }
+  }   
+    break;
+      
+  }
+
+}
+
